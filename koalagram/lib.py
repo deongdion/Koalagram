@@ -349,15 +349,11 @@ class Koalagram:
             pos = json_end if json_end != -1 else len_end
         
         # Find matching JSON
-        import json
         for size, json_content in all_jsons:
             try:
                 data = json.loads(json_content)
                 json_str = json.dumps(data)
 
-                with open('1.json', 'w+', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4)
-                
                 if f'"code":"{shortcode}"' in json_str or f'"code": "{shortcode}"' in json_str:
                     # Look for xdt_api__v1__media__shortcode__web_info structure
                     if 'xdt_api__v1__media__shortcode__web_info' in json_str:
@@ -365,31 +361,82 @@ class Koalagram:
                         api_data = self._find_api_response(data)
                         if api_data:
                             return self._parse_media_from_api(api_data)
-                    
+
                     # Fallback to old method
                     matching_item = self._find_matching_item(data, shortcode)
                     if matching_item:
                         return self._parse_media(matching_item)
-                        
+
             except json.JSONDecodeError:
                 continue
                 
         raise Exception("Could not find media data")
     
     def _find_matching_item(self, obj, target_code):
+        """code == target_code 인 item을 찾는다.
+
+        인스타그램 응답에는 같은 code를 가진 item이 여럿 있을 수 있다.
+        예: 릴스 페이지의 XIGPolarisVideoMedia(게이팅/댓글 메타데이터) item은
+        code는 일치하지만 video_versions/carousel_media 같은 미디어 필드가 없다.
+        단순히 "첫 번째 매칭"을 반환하면 이 메타데이터 item이 잡혀서 files=[] 가 된다.
+        따라서 미디어 필드(video_versions / carousel_media / image_versions2)를
+        가진 item을 우선적으로 반환하고, 없을 때만 일반 매칭을 반환한다.
+        """
+        # 1순위: 미디어 필드를 가진 매칭 item
+        result = self._find_item_with_media(obj, target_code)
+        if result is not None:
+            return result
+        # 2순위: 기존 동작 (code만 일치하는 첫 item)
+        return self._find_item_by_code(obj, target_code)
+
+    def _find_item_by_code(self, obj, target_code):
         if isinstance(obj, dict):
             if obj.get('code') == target_code:
                 return obj
-            for key, value in obj.items():
-                result = self._find_matching_item(value, target_code)
+            for value in obj.values():
+                result = self._find_item_by_code(value, target_code)
                 if result:
                     return result
         elif isinstance(obj, list):
             for item in obj:
-                result = self._find_matching_item(item, target_code)
+                result = self._find_item_by_code(item, target_code)
                 if result:
                     return result
         return None
+
+    def _find_item_with_media(self, obj, target_code):
+        """code가 일치하면서 실제 미디어 필드를 가진 item을 우선 반환."""
+        if isinstance(obj, dict):
+            if obj.get('code') == target_code and self._has_media_fields(obj):
+                return obj
+            for value in obj.values():
+                result = self._find_item_with_media(value, target_code)
+                if result:
+                    return result
+        elif isinstance(obj, list):
+            for item in obj:
+                result = self._find_item_with_media(item, target_code)
+                if result:
+                    return result
+        return None
+
+    @staticmethod
+    def _has_media_fields(obj) -> bool:
+        """실제 미디어 데이터(파일 URL을 뽑아낼 수 있는 필드)가 있는지."""
+        if not isinstance(obj, dict):
+            return False
+        # 1) carousel (여러 장)
+        if obj.get('carousel_media'):
+            return True
+        # 2) 단일 비디오
+        vv = obj.get('video_versions')
+        if isinstance(vv, list) and vv:
+            return True
+        # 3) 단일 이미지
+        iv2 = obj.get('image_versions2')
+        if isinstance(iv2, dict) and isinstance(iv2.get('candidates'), list) and iv2['candidates']:
+            return True
+        return False
     
     def _find_api_response(self, obj):
         """Find the data object containing xdt_api__v1__media__shortcode__web_info"""
