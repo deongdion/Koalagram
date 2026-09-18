@@ -1,71 +1,83 @@
 import asyncio
 import os
-from dotenv import load_dotenv
-from koalagram import Koalagram
 
-# Load environment variables
+from dotenv import load_dotenv
+
+from koalagram import (
+    FileType,
+    Koalagram,
+    KoalagramError,
+    MediaGatedError,
+    MediaNotFoundError,
+    RateLimitError,
+)
+
 load_dotenv()
 
-# Get API key from environment variable
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
 
 async def main():
-    # Check if API key is set
-    if not GROQ_API_KEY:
-        print("Error: GROQ_API_KEY not found in .env file")
-        print("Please set your Groq API key in the .env file")
-        return
-    
-    # Create Koalagram instance with Groq API
-    client = Koalagram(groq_api_key=GROQ_API_KEY, debug=DEBUG)
-    
-    # Example Instagram URL
+    client = Koalagram(debug=DEBUG)
+
     url = input("Enter Instagram URL: ").strip()
-    
     if not url:
         print("No URL provided, using example URL")
         url = "https://www.instagram.com/p/EXAMPLE_CODE/"
-    
+
     try:
-        # Fetch media info
         print(f"\nFetching: {url}")
         media = await client.fetch(url)
-        
-        print(f"\n📊 Media Info:")
-        print(f"  Type: {media.type.name}")
-        print(f"  User: @{media.user.name} ({media.user.nickname})")
-        print(f"  Files: {len(media.files)} items")
-        
-        # Analyze the post (uses Groq for AI analysis)
-        print("\n🔄 Analyzing...")
-        result = await media.analyze()
-        
-        if result.summary:
-            print(f"\n📋 Summary:\n{result.summary}")
-        
-        if result.locations:
-            print(f"\n📍 Locations found:")
-            for loc in result.locations:
-                print(f"  - {loc.name}")
-                if loc.address:
-                    print(f"    Address: {loc.address}")
-        else:
-            print("\n📍 No locations found")
-            
-        # Ask if user wants to download
-        download = input("\n💾 Download media files? (y/n): ").strip().lower()
-        if download == 'y':
-            downloaded_files = await client.download(media)
-            print(f"\n✅ Downloaded {len(downloaded_files)} files")
-        
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
+    except MediaNotFoundError:
+        print("\n❌ 게시물을 찾을 수 없습니다 (삭제됐거나 비공개 계정)")
+        return
+    except MediaGatedError as e:
+        print(f"\n🔒 비로그인으로는 볼 수 없는 게시물입니다: {e.ruling.title}")
+        if e.ruling.description:
+            print(f"   {e.ruling.description}")
+        return
+    except RateLimitError as e:
+        print(f"\n⏳ 조회 한도를 넘겼습니다: {e}")
+        return
+    except KoalagramError as e:
+        print(f"\n❌ Error: {type(e).__name__}: {e}")
         if DEBUG:
             import traceback
             traceback.print_exc()
+        return
 
-# Run the async main function
+    print("\n📊 Media Info:")
+    print(f"  Type: {media.type.value}")
+    nickname = f" ({media.user.nickname})" if media.user.nickname else ""
+    print(f"  User: @{media.user.name}{nickname}")
+    print(f"  Files: {len(media.files)} items")
+    print(f"  ❤️ Likes: {media.like_count:,}")
+    print(f"  💬 Comments: {media.comment_count:,}")
+    if media.taken_at_dt:
+        print(f"  📅 Posted: {media.taken_at_dt:%Y-%m-%d %H:%M UTC}")
+    if media.location:
+        print(f"  📍 Location: {media.location.name}")
+
+    print("\n🔗 Media links:")
+    for file in media.files:
+        icon = "🎬" if file.type is FileType.VIDEO else "🖼️"
+        size = f" {file.width}x{file.height}" if file.width else ""
+        print(f"  {icon} [{file.index + 1}] {file.type.value}{size}: {file.url}")
+
+    if media.video_files:
+        print(f"\n🎬 Video links ({len(media.video_files)}):")
+        for i, file in enumerate(media.video_files, 1):
+            print(f"  {i}. {file.best_video_url()}")
+            for version in file.video_versions:
+                dims = f"{version.width}x{version.height}" if version.width else "크기미상"
+                print(f"       type={version.type_id} {dims}")
+    else:
+        print("\n🎬 No video files in this post")
+
+    if media.caption:
+        print(f"\n📋 Caption:\n{media.caption}")
+
+
 if __name__ == "__main__":
     print("🐨 Koalagram - Instagram Media Analyzer")
     print("=" * 40)

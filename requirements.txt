@@ -1,0 +1,10 @@
+# 필수
+curl_cffi>=0.7
+
+# 선택 - AI 분석 (Groq 요약 + 장소 추출)
+groq
+json-repair
+pydantic
+
+# 선택 - .env 자동 로드
+python-dotenv
